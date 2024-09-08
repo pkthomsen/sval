@@ -61,7 +61,7 @@ function* hoistVarRecursion(statement: acorn.Statement, scope: Scope): IterableI
         yield* VariableDeclaration(statement.left, scope, { hoist: true })
       }
     case 'ForStatement':
-      if (statement.type === 'ForStatement' && statement.init.type === 'VariableDeclaration') {
+      if (statement.type === 'ForStatement' && statement.init?.type === 'VariableDeclaration') {
         yield* VariableDeclaration(statement.init, scope, { hoist: true })
       }
     case 'WhileStatement':
