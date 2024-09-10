@@ -1,3 +1,5 @@
+import { Ctrl } from "."
+
 export type VarKind = 'var' | 'let' | 'const'
 
 export interface Variable {
@@ -30,10 +32,16 @@ export class Var implements Variable {
 export class Prop implements Variable {
   private readonly object: any
   private readonly property: string
+  private readonly ctrl: Ctrl;
 
-  constructor(object: any, property: string) {
+  constructor(object: any, property: string, ctrl: Ctrl) {
+    if (ctrl.noProto && (property === "prototype" || property === "__proto__")) {
+      throw new Error("access to prototypes are not allowed");
+    }
+
     this.object = object
-    this.property = property
+    this.property = property;
+    this.ctrl = ctrl;
   }
 
   get() {
@@ -41,6 +49,10 @@ export class Prop implements Variable {
   }
 
   set(value: any) {
+    if (this.ctrl.blackList.includes(this.object)) {
+      const idx = this.ctrl.blackList.findIndex(p => p === this.object);
+      throw new Error("object '" + this.ctrl.blackListNames[idx] + "' is readonly");
+    }
     this.object[this.property] = value
     return true
   }

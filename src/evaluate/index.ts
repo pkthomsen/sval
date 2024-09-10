@@ -13,6 +13,11 @@ import * as pattern from './pattern'
 let evaluateOps: any
 
 export default function* evaluate(node: Node, scope: Scope) {
+
+  scope.entry();
+
+//  console.log("eval", __cnt, __now, scope.global());
+
   if (!node) return
 
   // delay initalizing to remove circular reference issue for jest
@@ -31,7 +36,10 @@ export default function* evaluate(node: Node, scope: Scope) {
 
   const handler = evaluateOps[node.type]
   if (handler) {
-    return yield* handler(node, scope)
+    const res = yield* handler(node, scope);
+    scope.exit();
+    return res;
+
   } else {
     throw new Error(`${node.type} isn't implemented`)
   }

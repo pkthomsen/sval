@@ -193,7 +193,7 @@ export function* AssignmentExpression(node: acorn.AssignmentExpression, scope: S
     variable = yield* Identifier(left, scope, { getVar: true, throwErr: false })
     if (!variable) {
       const win = scope.global().find('window').get()
-      variable = new Prop(win, left.name)
+      variable = new Prop(win, left.name, scope.ctrl)
     }
   } else if (left.type === 'MemberExpression') {
     variable = yield* MemberExpression(left, scope, { getVar: true })
@@ -278,19 +278,19 @@ export function* MemberExpression(
 
   if (getVar) {
     // left value
-    const setter = getSetter(object, key)
+    const setter = getSetter(object, key, scope.ctrl)
     if (node.object.type === 'Super' && setter) {
       // transfer the setter from super to this with a private key
       const thisObject = scope.find('this').get()
       const privateKey = createSymbol(key)
       define(thisObject, privateKey, { set: setter })
-      return new Prop(thisObject, privateKey)
+      return new Prop(thisObject, privateKey, scope.ctrl)
     } else {
-      return new Prop(object, key)
+      return new Prop(object, key, scope.ctrl)
     }
   } else {
     // right value
-    const getter = getGetter(object, key)
+    const getter = getGetter(object, key, scope.ctrl)
     if (node.object.type === 'Super' && getter) {
       const thisObject = scope.find('this').get()
       // if it's optional chaining, check if this ref is null or undefined, so use ==
@@ -388,6 +388,14 @@ export function* CallExpression(node: acorn.CallExpression, scope: Scope) {
       } else {
         throw new TypeError(`Class constructor ${name} cannot be invoked without 'new'`)
       }
+    }
+  }
+
+  if (scope.ctrl.interceptFunction.includes(func)) {
+    const idx = scope.ctrl.interceptFunction.findIndex(p => p === func);
+    func = scope.ctrl.interceptFunctionReplace[idx];
+    if (!func) {
+      throw new Error("calling function '" + scope.ctrl.interceptFunctionName[idx] + "' not allowed");
     }
   }
 

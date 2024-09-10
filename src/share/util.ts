@@ -1,3 +1,5 @@
+import { Ctrl } from "../scope"
+
 export const freeze = Object.freeze
 
 export const define = Object.defineProperty
@@ -22,7 +24,14 @@ export function getProto(obj: any) {
 }
 
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
-function getGetterOrSetter(method: 'get' | 'set', obj: any, key: string) {
+function getGetterOrSetter(method: 'get' | 'set', obj: any, key: string, ctrl: Ctrl) {
+
+  if (ctrl.noProto && (key === "prototype" || key === "__proto__")) { throw new Error ("Access to prototype not allowed"); }
+  if (method === "set" && ctrl.blackList.includes(obj)) {
+    const idx = ctrl.blackList.findIndex(p => p === obj);
+    throw new Error("object '" + ctrl.blackListNames[idx] + "' is readonly");
+  }
+
   while (obj) {
     const descriptor = getOwnPropertyDescriptor(obj, key)
     const value = typeof descriptor !== 'undefined'
@@ -36,11 +45,11 @@ function getGetterOrSetter(method: 'get' | 'set', obj: any, key: string) {
     }
   }
 }
-export function getGetter(obj: any, key: string) {
-  return getGetterOrSetter('get', obj, key)
+export function getGetter(obj: any, key: string, ctrl: Ctrl) {
+  return getGetterOrSetter('get', obj, key, ctrl)
 }
-export function getSetter(obj: any, key: string) {
-  return getGetterOrSetter('set', obj, key)
+export function getSetter(obj: any, key: string, ctrl: Ctrl) {
+  return getGetterOrSetter('set', obj, key, ctrl)
 }
 
 export const create = Object.create
@@ -159,13 +168,108 @@ for (let i = 0; i < names.length; i++) {
   try { win[name] = globalObj[name] } catch (err) { /* empty */ }
 }
 export const WINDOW = createSymbol('window')
-export function createSandBox() {
-  return assign(create({ [WINDOW]: globalObj }), win)
-}
 
 export function createSymbol(key: string) {
   return key + Math.random().toString(36).substring(2)
 }
+
+
+/**
+ * create plain JS context with just the basic Javascript objects and function
+ * available.
+ * @param obj 
+ * @returns 
+ */
+
+
+function createPlainJsGlobalObj() {
+
+  let globalObj = Object.create(null);
+  const coreJs = {
+
+    // Core types
+    Object, Function, Array, Number, String, Boolean, 
+    
+    // Core values
+    Infinity, NaN, undefined: undefined as any,
+
+    // Core objects
+    Date, Error,
+
+    // Core functions
+    parseFloat, parseInt, Math, JSON, isNaN, isFinite,
+  }
+  Object.assign(globalObj, coreJs);
+
+  // Browser specific functions
+  try {
+    Object.assign(globalObj, { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent })
+  } catch (err) { }
+
+
+  return globalObj;
+
+/*
+  try { globalObj.Symbol = Symbol                         } catch (err) {  }
+  try { globalObj.Promise = Promise                       } catch (err) {  }
+  try { globalObj.RegExp = RegExp                         } catch (err) {  }
+  try { globalObj.EvalError = EvalError                   } catch (err) {  }
+  try { globalObj.RangeError = RangeError                 } catch (err) {  }
+  try { globalObj.ReferenceError = ReferenceError         } catch (err) {  }
+  try { globalObj.SyntaxError = SyntaxError               } catch (err) {  }
+  try { globalObj.TypeError = TypeError                   } catch (err) {  }
+  try { globalObj.URIError = URIError                     } catch (err) {  }
+  try { globalObj.console = console                       } catch (err) {  }
+  try { globalObj.Intl = Intl                             } catch (err) {  }
+  try { globalObj.ArrayBuffer = ArrayBuffer               } catch (err) {  }
+  try { globalObj.Uint8Array = Uint8Array                 } catch (err) {  }
+  try { globalObj.Int8Array = Int8Array                   } catch (err) {  }
+  try { globalObj.Uint16Array = Uint16Array               } catch (err) {  }
+  try { globalObj.Int16Array = Int16Array                 } catch (err) {  }
+  try { globalObj.Uint32Array = Uint32Array               } catch (err) {  }
+  try { globalObj.Int32Array = Int32Array                 } catch (err) {  }
+  try { globalObj.Float32Array = Float32Array             } catch (err) {  }
+  try { globalObj.Float64Array = Float64Array             } catch (err) {  }
+  try { globalObj.Uint8ClampedArray = Uint8ClampedArray   } catch (err) {  }
+  try { globalObj.DataView = DataView                     } catch (err) {  }
+  try { globalObj.Map = Map                               } catch (err) {  }
+  try { globalObj.Set = Set                               } catch (err) {  }
+  try { globalObj.WeakMap = WeakMap                       } catch (err) {  }
+  try { globalObj.WeakSet = WeakSet                       } catch (err) {  }
+  try { globalObj.Proxy = Proxy                           } catch (err) {  }
+  try { globalObj.Reflect = Reflect                       } catch (err) {  }
+  try { globalObj.BigInt = BigInt                         } catch (err) {  }
+  try { globalObj.escape = escape                         } catch (err) {  }
+  try { globalObj.unescape = unescape                     } catch (err) {  }
+  try { globalObj.eval = eval                             } catch (err) {  }
+  try { globalObj.SharedArrayBuffer = SharedArrayBuffer   } catch (err) {  }
+  try { globalObj.Atomics = Atomics                       } catch (err) {  }
+  try { globalObj.WebAssembly = WebAssembly               } catch (err) {  }
+  try { globalObj.clearInterval = clearInterval           } catch (err) {  }
+  try { globalObj.clearTimeout = clearTimeout             } catch (err) {  }
+  try { globalObj.setInterval = setInterval               } catch (err) {  }
+  try { globalObj.setTimeout = setTimeout                 } catch (err) {  }
+  try { globalObj.crypto = crypto                         } catch (err) {  }
+*/
+  
+}
+
+const emptyGlobalObj = createPlainJsGlobalObj();
+const emptyWin = create({});
+Object.assign(emptyWin, emptyGlobalObj);
+
+
+export function createSandBox(type: true | false | "empty" | "full") {
+
+  if (type === "empty") {
+    return assign (create({ [WINDOW]: emptyGlobalObj }), emptyWin);
+  } else {
+    return assign(create({ [WINDOW]: globalObj }), win)
+  }
+}
+
+
+
 
 export function getAsyncIterator(obj: any) {
   let iterator: any

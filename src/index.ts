@@ -10,10 +10,86 @@ import evaluate from './evaluate_n'
 export interface SvalOptions {
   ecmaVer?: Options['ecmaVersion']
   sourceType?: Options['sourceType']
-  sandBox?: boolean
+  sandBox?: true | false | "full" | "empty";
+  timeout?: number;
 }
 
 const latestVer = 15
+
+
+/**
+ * Define the list of Object that are blacklisted (readonly)
+ */
+const blackListDefs: [object, string][] = [
+  [Object,             "Object"],
+  [Object.prototype,   "Object.prototype"],
+  [Function,           "Function"],
+  [Function.prototype, "Function.prototype"],
+  [Array,              "Array"],
+  [Array.prototype,    "Array.prototype"],
+  [Number,             "Number"],
+  [Number.prototype,   "Number.prototype"],
+  [String,             "String"],
+  [String.prototype,   "String.prototype"],
+  [Boolean,            "Boolean"],
+  [Boolean.prototype,  "Boolean.prototype"],
+
+  [Date,               "Date"],
+  [Date.prototype,     "Date.prototype"],
+  [Error,              "Error"],
+  [Error.prototype,    "Error.prototype"],
+
+  [Infinity,           "Infinity"],
+  [NaN,                "NaN"],
+
+  [Math,               "Math"],
+  [JSON,               "JSON"],
+];
+
+
+/**
+ * Convert the list into simple arrays with just the object and the string. This allows
+ * to perform the check in the list by simply calling blackList.includes(object) which is
+ * fast native function.
+ */
+
+const blackList      = blackListDefs.map(p => p[0]);
+const blackListNames = blackListDefs.map(p => p[1]);
+
+/**
+ * The safeObjectAssign function is used to intercept the normal Object.assign() function.
+ * This is necessary to check black listed objects from being the target of an assign.
+ * 
+ * @param target 
+ * @param sources 
+ * @returns 
+ */
+const safeObjectAssign = (target: any, ...sources: any[]) => {
+  if (blackList.includes(target)) {
+    const idx = blackList.findIndex(p => p === target);
+    throw new Error("object '" + blackListNames[idx] + "' is readonly");
+  }
+  return Object.assign(target, ...sources);
+};       
+
+
+/**
+ * Define the list of Functions that must be intercepted. The intercepted function
+ * can either be replaced by another function, of will just cause an exception
+ */
+const interceptFunctionDefs: [Function, string, Function][] = [
+  [Object.assign,         "Object.assign",         safeObjectAssign],
+  [Object.getPrototypeOf, "Object.getPrototypeOf", null],
+  [Object.setPrototypeOf, "Object.setPrototypeOf", null],
+]
+
+const interceptFunction        = interceptFunctionDefs.map(p => p[0]);
+const interceptFunctionName    = interceptFunctionDefs.map(p => p[1]);
+const interceptFunctionReplace = interceptFunctionDefs.map(p => p[2]);
+
+
+
+
 
 class Sval {
   static version: string = version
@@ -21,7 +97,8 @@ class Sval {
   private options: Options = { ecmaVersion: 'latest' }
   private scope = new Scope(null, true)
 
-  exports: Record<string, any> = {}
+  exports: Record<string, any> = {};
+
 
   constructor(options: SvalOptions = {}) {
     let { ecmaVer = 'latest', sandBox = true, sourceType = 'script' } = options
@@ -39,10 +116,20 @@ class Sval {
 
     if (sandBox) {
       // Shallow clone to create a sandbox
-      const win = createSandBox()
+      const win = createSandBox(sandBox)
       this.scope.let('globalThis', win)
       this.scope.let('window', win)
       this.scope.let('this', win)
+
+      if (sandBox === "empty") {
+        this.scope.ctrl.noProto = true;
+        this.scope.ctrl.blackList                = blackList;
+        this.scope.ctrl.blackListNames           = blackListNames;
+        this.scope.ctrl.interceptFunction        = interceptFunction;
+        this.scope.ctrl.interceptFunctionName    = interceptFunctionName;
+        this.scope.ctrl.interceptFunctionReplace = interceptFunctionReplace;
+      }
+1
     } else {
       this.scope.let('globalThis', globalObj)
       this.scope.let('window', globalObj)
@@ -50,6 +137,10 @@ class Sval {
     }
 
     this.scope.const(sourceType === 'module' ? EXPORTS : 'exports', this.exports = {})
+    
+    if (typeof options.timeout === "number") {
+      this.scope.setTimeout(options.timeout)
+    }
   }
 
   import(nameOrModules: string | Record<string, any>, mod?: any) {

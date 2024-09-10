@@ -2,6 +2,21 @@ import { NOINIT, DEADZONE } from '../share/const'
 import { Variable, Var, Prop } from './variable'
 import { create, define } from '../share/util'
 
+export interface Ctrl {
+  cnt: number;
+  now: number;
+  level: number;
+  timeout: number;
+
+  noProto: boolean;
+  blackList: object[];
+  blackListNames: string[];
+
+  interceptFunction: Function[];
+  interceptFunctionName: string[];
+  interceptFunctionReplace: Function[];
+}
+
 /**
  * Scope simulation class
  */
@@ -27,6 +42,13 @@ export default class Scope {
    */
   private readonly context: { [key: string]: Var } = create(null)
 
+
+  /**
+   * Control structure that is passed as a global control context.
+   */
+  public ctrl: Ctrl;
+
+
   /**
    * Create a simulated scope
    * @param parent the parent scope along the scope chain (default: null)
@@ -38,7 +60,45 @@ export default class Scope {
   ) {
     this.parent = parent
     this.isolated = isolated
+    this.ctrl = parent?.ctrl || {
+      level: 0, cnt: -1, now: 0, timeout: 1000, noProto: false,
+      blackList: [], blackListNames: [], interceptFunction: [], interceptFunctionName: [], interceptFunctionReplace: []
+    };
   }
+
+
+  /**
+   * entry() and exit() are called on entry and exit of the evaluate() function.
+   * They are used to keep track of the time spent processing and will trigger an
+   * exception if the time is exceeded.
+   */
+  entry() {
+    if (++this.ctrl.cnt % 10000 == 0) {
+      if (this.ctrl.cnt === 0) {
+        this.ctrl.now = Date.now();
+      } else if (Date.now() - this.ctrl.now > this.ctrl.timeout) {
+        throw new Error("Execution Timeout");
+      }
+    }
+    this.ctrl.level++;
+  }
+
+  exit() {
+    if (--this.ctrl.level === 0) {
+      this.ctrl.cnt = -1;
+      //console.log("leaving machine");
+    }
+  }
+
+  /**
+   * set the timeout for the sandbox
+   * @param timeout - timeout in milliseconds
+   */
+  setTimeout(timeout: number) {
+    this.ctrl.timeout = timeout;
+  }
+
+
 
   /**
    * Get global scope
@@ -80,7 +140,7 @@ export default class Scope {
       const win = this.global().find('window').get()
       if (name in win) {
         // Find property in window
-        return new Prop(win, name)
+        return new Prop(win, name, this.ctrl)
       } else {
         // Not found
         return null

@@ -94,7 +94,14 @@
       return getPrototypeOf ? getPrototypeOf(obj) : obj.__proto__;
   }
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-  function getGetterOrSetter(method, obj, key) {
+  function getGetterOrSetter(method, obj, key, ctrl) {
+      if (ctrl.noProto && (key === "prototype" || key === "__proto__")) {
+          throw new Error("Access to prototype not allowed");
+      }
+      if (method === "set" && ctrl.blackList.includes(obj)) {
+          const idx = ctrl.blackList.findIndex(p => p === obj);
+          throw new Error("object '" + ctrl.blackListNames[idx] + "' is readonly");
+      }
       while (obj) {
           const descriptor = getOwnPropertyDescriptor(obj, key);
           const value = typeof descriptor !== 'undefined'
@@ -109,11 +116,11 @@
           }
       }
   }
-  function getGetter(obj, key) {
-      return getGetterOrSetter('get', obj, key);
+  function getGetter(obj, key, ctrl) {
+      return getGetterOrSetter('get', obj, key, ctrl);
   }
-  function getSetter(obj, key) {
-      return getGetterOrSetter('set', obj, key);
+  function getSetter(obj, key, ctrl) {
+      return getGetterOrSetter('set', obj, key, ctrl);
   }
   const create = Object.create;
   function inherits(subClass, superClass) {
@@ -411,11 +418,35 @@
       catch (err) { }
   }
   const WINDOW = createSymbol('window');
-  function createSandBox() {
-      return assign(create({ [WINDOW]: globalObj }), win);
-  }
   function createSymbol(key) {
       return key + Math.random().toString(36).substring(2);
+  }
+  function createPlainJsGlobalObj() {
+      let globalObj = Object.create(null);
+      const coreJs = {
+          Object, Function, Array, Number, String, Boolean,
+          Infinity, NaN,
+          undefined: undefined,
+          Date, Error,
+          parseFloat, parseInt, Math, JSON, isNaN, isFinite,
+      };
+      Object.assign(globalObj, coreJs);
+      try {
+          Object.assign(globalObj, { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent });
+      }
+      catch (err) { }
+      return globalObj;
+  }
+  const emptyGlobalObj = createPlainJsGlobalObj();
+  const emptyWin = create({});
+  Object.assign(emptyWin, emptyGlobalObj);
+  function createSandBox(type) {
+      if (type === "empty") {
+          return assign(create({ [WINDOW]: emptyGlobalObj }), emptyWin);
+      }
+      else {
+          return assign(create({ [WINDOW]: globalObj }), win);
+      }
   }
   function getAsyncIterator(obj) {
       let iterator;
@@ -476,14 +507,22 @@
       }
   }
   class Prop {
-      constructor(object, property) {
+      constructor(object, property, ctrl) {
+          if (ctrl.noProto && (property === "prototype" || property === "__proto__")) {
+              throw new Error("access to prototypes are not allowed");
+          }
           this.object = object;
           this.property = property;
+          this.ctrl = ctrl;
       }
       get() {
           return this.object[this.property];
       }
       set(value) {
+          if (this.ctrl.blackList.includes(this.object)) {
+              const idx = this.ctrl.blackList.findIndex(p => p === this.object);
+              throw new Error("object '" + this.ctrl.blackListNames[idx] + "' is readonly");
+          }
           this.object[this.property] = value;
           return true;
       }
@@ -497,6 +536,29 @@
           this.context = create(null);
           this.parent = parent;
           this.isolated = isolated;
+          this.ctrl = (parent === null || parent === void 0 ? void 0 : parent.ctrl) || {
+              level: 0, cnt: -1, now: 0, timeout: 1000, noProto: false,
+              blackList: [], blackListNames: [], interceptFunction: [], interceptFunctionName: [], interceptFunctionReplace: []
+          };
+      }
+      entry() {
+          if (++this.ctrl.cnt % 10000 == 0) {
+              if (this.ctrl.cnt === 0) {
+                  this.ctrl.now = Date.now();
+              }
+              else if (Date.now() - this.ctrl.now > this.ctrl.timeout) {
+                  throw new Error("Execution Timeout");
+              }
+          }
+          this.ctrl.level++;
+      }
+      exit() {
+          if (--this.ctrl.level === 0) {
+              this.ctrl.cnt = -1;
+          }
+      }
+      setTimeout(timeout) {
+          this.ctrl.timeout = timeout;
       }
       global() {
           let scope = this;
@@ -523,7 +585,7 @@
           else {
               const win = this.global().find('window').get();
               if (name in win) {
-                  return new Prop(win, name);
+                  return new Prop(win, name, this.ctrl);
               }
               else {
                   return null;
@@ -810,7 +872,7 @@
           variable = Identifier(left, scope, { getVar: true, throwErr: false });
           if (!variable) {
               const win = scope.global().find('window').get();
-              variable = new Prop(win, left.name);
+              variable = new Prop(win, left.name, scope.ctrl);
           }
       }
       else if (left.type === 'MemberExpression') {
@@ -913,19 +975,19 @@
           object = object[PRIVATE];
       }
       if (getVar) {
-          const setter = getSetter(object, key);
+          const setter = getSetter(object, key, scope.ctrl);
           if (node.object.type === 'Super' && setter) {
               const thisObject = scope.find('this').get();
               const privateKey = createSymbol(key);
               define(thisObject, privateKey, { set: setter });
-              return new Prop(thisObject, privateKey);
+              return new Prop(thisObject, privateKey, scope.ctrl);
           }
           else {
-              return new Prop(object, key);
+              return new Prop(object, key, scope.ctrl);
           }
       }
       else {
-          const getter = getGetter(object, key);
+          const getter = getGetter(object, key, scope.ctrl);
           if (node.object.type === 'Super' && getter) {
               const thisObject = scope.find('this').get();
               if (node.optional && thisObject == null) {
@@ -1012,6 +1074,13 @@
               else {
                   throw new TypeError(`Class constructor ${name} cannot be invoked without 'new'`);
               }
+          }
+      }
+      if (scope.ctrl.interceptFunction.includes(func)) {
+          const idx = scope.ctrl.interceptFunction.findIndex(p => p === func);
+          func = scope.ctrl.interceptFunctionReplace[idx];
+          if (!func) {
+              throw new Error("calling function '" + scope.ctrl.interceptFunctionName[idx] + "' not allowed");
           }
       }
       let args = [];
@@ -1348,6 +1417,7 @@
 
   let evaluateOps;
   function evaluate(node, scope) {
+      scope.entry();
       if (!node)
           return;
       if (!evaluateOps) {
@@ -1355,7 +1425,9 @@
       }
       const handler = evaluateOps[node.type];
       if (handler) {
-          return handler(node, scope);
+          const res = handler(node, scope);
+          scope.exit();
+          return res;
       }
       else {
           throw new Error(`${node.type} isn't implemented`);
@@ -2080,7 +2152,7 @@
           variable = yield* Identifier$1(left, scope, { getVar: true, throwErr: false });
           if (!variable) {
               const win = scope.global().find('window').get();
-              variable = new Prop(win, left.name);
+              variable = new Prop(win, left.name, scope.ctrl);
           }
       }
       else if (left.type === 'MemberExpression') {
@@ -2183,19 +2255,19 @@
           object = object[PRIVATE];
       }
       if (getVar) {
-          const setter = getSetter(object, key);
+          const setter = getSetter(object, key, scope.ctrl);
           if (node.object.type === 'Super' && setter) {
               const thisObject = scope.find('this').get();
               const privateKey = createSymbol(key);
               define(thisObject, privateKey, { set: setter });
-              return new Prop(thisObject, privateKey);
+              return new Prop(thisObject, privateKey, scope.ctrl);
           }
           else {
-              return new Prop(object, key);
+              return new Prop(object, key, scope.ctrl);
           }
       }
       else {
-          const getter = getGetter(object, key);
+          const getter = getGetter(object, key, scope.ctrl);
           if (node.object.type === 'Super' && getter) {
               const thisObject = scope.find('this').get();
               if (node.optional && thisObject == null) {
@@ -2282,6 +2354,13 @@
               else {
                   throw new TypeError(`Class constructor ${name} cannot be invoked without 'new'`);
               }
+          }
+      }
+      if (scope.ctrl.interceptFunction.includes(func)) {
+          const idx = scope.ctrl.interceptFunction.findIndex(p => p === func);
+          func = scope.ctrl.interceptFunctionReplace[idx];
+          if (!func) {
+              throw new Error("calling function '" + scope.ctrl.interceptFunctionName[idx] + "' not allowed");
           }
       }
       let args = [];
@@ -2617,6 +2696,7 @@
 
   let evaluateOps$1;
   function* evaluate$1(node, scope) {
+      scope.entry();
       if (!node)
           return;
       if (!evaluateOps$1) {
@@ -2624,7 +2704,9 @@
       }
       const handler = evaluateOps$1[node.type];
       if (handler) {
-          return yield* handler(node, scope);
+          const res = yield* handler(node, scope);
+          scope.exit();
+          return res;
       }
       else {
           throw new Error(`${node.type} isn't implemented`);
@@ -3214,6 +3296,7 @@
       }
   }
   function* hoistVarRecursion(statement, scope) {
+      var _a;
       switch (statement.type) {
           case 'VariableDeclaration':
               yield* VariableDeclaration$1(statement, scope, { hoist: true });
@@ -3224,7 +3307,7 @@
                   yield* VariableDeclaration$1(statement.left, scope, { hoist: true });
               }
           case 'ForStatement':
-              if (statement.type === 'ForStatement' && statement.init.type === 'VariableDeclaration') {
+              if (statement.type === 'ForStatement' && ((_a = statement.init) === null || _a === void 0 ? void 0 : _a.type) === 'VariableDeclaration') {
                   yield* VariableDeclaration$1(statement.init, scope, { hoist: true });
               }
           case 'WhileStatement':
@@ -3465,6 +3548,7 @@
       }
   }
   function hoistVarRecursion$1(statement, scope) {
+      var _a;
       switch (statement.type) {
           case 'VariableDeclaration':
               VariableDeclaration(statement, scope, { hoist: true });
@@ -3475,7 +3559,7 @@
                   VariableDeclaration(statement.left, scope, { hoist: true });
               }
           case 'ForStatement':
-              if (statement.type === 'ForStatement' && statement.init.type === 'VariableDeclaration') {
+              if (statement.type === 'ForStatement' && ((_a = statement.init) === null || _a === void 0 ? void 0 : _a.type) === 'VariableDeclaration') {
                   VariableDeclaration(statement.init, scope, { hoist: true });
               }
           case 'WhileStatement':
@@ -3663,6 +3747,45 @@
   }
 
   const latestVer = 15;
+  const blackListDefs = [
+      [Object, "Object"],
+      [Object.prototype, "Object.prototype"],
+      [Function, "Function"],
+      [Function.prototype, "Function.prototype"],
+      [Array, "Array"],
+      [Array.prototype, "Array.prototype"],
+      [Number, "Number"],
+      [Number.prototype, "Number.prototype"],
+      [String, "String"],
+      [String.prototype, "String.prototype"],
+      [Boolean, "Boolean"],
+      [Boolean.prototype, "Boolean.prototype"],
+      [Date, "Date"],
+      [Date.prototype, "Date.prototype"],
+      [Error, "Error"],
+      [Error.prototype, "Error.prototype"],
+      [Infinity, "Infinity"],
+      [NaN, "NaN"],
+      [Math, "Math"],
+      [JSON, "JSON"],
+  ];
+  const blackList = blackListDefs.map(p => p[0]);
+  const blackListNames = blackListDefs.map(p => p[1]);
+  const safeObjectAssign = (target, ...sources) => {
+      if (blackList.includes(target)) {
+          const idx = blackList.findIndex(p => p === target);
+          throw new Error("object '" + blackListNames[idx] + "' is readonly");
+      }
+      return Object.assign(target, ...sources);
+  };
+  const interceptFunctionDefs = [
+      [Object.assign, "Object.assign", safeObjectAssign],
+      [Object.getPrototypeOf, "Object.getPrototypeOf", null],
+      [Object.setPrototypeOf, "Object.setPrototypeOf", null],
+  ];
+  const interceptFunction = interceptFunctionDefs.map(p => p[0]);
+  const interceptFunctionName = interceptFunctionDefs.map(p => p[1]);
+  const interceptFunctionReplace = interceptFunctionDefs.map(p => p[2]);
   class Sval {
       constructor(options = {}) {
           this.options = { ecmaVersion: 'latest' };
@@ -3678,10 +3801,18 @@
           this.options.ecmaVersion = ecmaVer;
           this.options.sourceType = sourceType;
           if (sandBox) {
-              const win = createSandBox();
+              const win = createSandBox(sandBox);
               this.scope.let('globalThis', win);
               this.scope.let('window', win);
               this.scope.let('this', win);
+              if (sandBox === "empty") {
+                  this.scope.ctrl.noProto = true;
+                  this.scope.ctrl.blackList = blackList;
+                  this.scope.ctrl.blackListNames = blackListNames;
+                  this.scope.ctrl.interceptFunction = interceptFunction;
+                  this.scope.ctrl.interceptFunctionName = interceptFunctionName;
+                  this.scope.ctrl.interceptFunctionReplace = interceptFunctionReplace;
+              }
           }
           else {
               this.scope.let('globalThis', globalObj);
@@ -3689,6 +3820,9 @@
               this.scope.let('this', globalObj);
           }
           this.scope.const(sourceType === 'module' ? EXPORTS : 'exports', this.exports = {});
+          if (typeof options.timeout === "number") {
+              this.scope.setTimeout(options.timeout);
+          }
       }
       import(nameOrModules, mod) {
           if (typeof nameOrModules === 'string') {

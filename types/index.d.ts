@@ -2,7 +2,8 @@ import { Options, Node } from 'acorn';
 export interface SvalOptions {
     ecmaVer?: Options['ecmaVersion'];
     sourceType?: Options['sourceType'];
-    sandBox?: boolean;
+    sandBox?: true | false | "full" | "empty";
+    timeout?: number;
 }
 declare class Sval {
     static version: string;
