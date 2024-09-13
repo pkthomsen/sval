@@ -351,6 +351,14 @@
           }
           catch (err) { }
           try {
+              globalObj.atob = (str) => atob(str);
+          }
+          catch (err) { }
+          try {
+              globalObj.btoa = (str) => btoa(str);
+          }
+          catch (err) { }
+          try {
               globalObj.escape = escape;
           }
           catch (err) { }
@@ -432,7 +440,7 @@
       };
       Object.assign(globalObj, coreJs);
       try {
-          Object.assign(globalObj, { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent });
+          Object.assign(globalObj, { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent, atob: (str) => atob(str), btoa: (str) => btoa(str) });
       }
       catch (err) { }
       return globalObj;

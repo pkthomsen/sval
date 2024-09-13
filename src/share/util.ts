@@ -142,6 +142,8 @@ try {
     try { globalObj.decodeURIComponent = decodeURIComponent } catch (err) { /* empty */ }
     try { globalObj.encodeURI = encodeURI                   } catch (err) { /* empty */ }
     try { globalObj.encodeURIComponent = encodeURIComponent } catch (err) { /* empty */ }
+    try { globalObj.atob = (str: string) => atob(str)       } catch (err) { /* empty */ }
+    try { globalObj.btoa = (str: string) => btoa(str)       } catch (err) { /* empty */ }
     try { globalObj.escape = escape                         } catch (err) { /* empty */ }
     try { globalObj.unescape = unescape                     } catch (err) { /* empty */ }
     try { globalObj.eval = eval                             } catch (err) { /* empty */ }
@@ -197,13 +199,16 @@ function createPlainJsGlobalObj() {
     Date, Error,
 
     // Core functions
-    parseFloat, parseInt, Math, JSON, isNaN, isFinite,
+    parseFloat, parseInt, Math, JSON, isNaN, isFinite, 
   }
   Object.assign(globalObj, coreJs);
 
   // Browser specific functions
   try {
-    Object.assign(globalObj, { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent })
+    Object.assign(globalObj, 
+      { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent, 
+        atob: (str: string) => atob(str), btoa: (str: string) => btoa(str) }
+    )
   } catch (err) { }
 
 

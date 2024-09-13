@@ -428,6 +428,14 @@
             }
             catch (err) { }
             try {
+                globalObj.atob = function (str) { return atob(str); };
+            }
+            catch (err) { }
+            try {
+                globalObj.btoa = function (str) { return btoa(str); };
+            }
+            catch (err) { }
+            try {
                 globalObj.escape = escape;
             }
             catch (err) { }
@@ -508,7 +516,8 @@
         };
         Object.assign(globalObj, coreJs);
         try {
-            Object.assign(globalObj, { decodeURI: decodeURI, decodeURIComponent: decodeURIComponent, encodeURI: encodeURI, encodeURIComponent: encodeURIComponent });
+            Object.assign(globalObj, { decodeURI: decodeURI, decodeURIComponent: decodeURIComponent, encodeURI: encodeURI, encodeURIComponent: encodeURIComponent,
+                atob: function (str) { return atob(str); }, btoa: function (str) { return btoa(str); } });
         }
         catch (err) { }
         return globalObj;
